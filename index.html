@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Highway — live traffic visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --night:#17191D;          /* sky over the highway */
+    --asphalt:#25282E;
+    --asphalt-edge:#D8D6CE;   /* white edge lines */
+    --lane-paint:#E8C34A;     /* yellow median */
+    --sign-green:#1E6B3C;     /* highway exit boards */
+    --sign-border:#F2F4F0;
+    --armor:#4A5D3A;          /* defense olive */
+    --amber:#FFB94F;          /* sodium-vapor lights / demo badge */
+    --live:#57D98A;
+    --ink:#F2F4F0;
+    --dim:#9AA29B;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    background:var(--night);
+    color:var(--ink);
+    font-family:'Overpass', 'Segoe UI', system-ui, sans-serif;
+    overflow:hidden;
+  }
+
+  /* ---- overhead gantry sign (header) ---- */
+  #gantry{
+    height:58px;
+    background:linear-gradient(#237A46, var(--sign-green));
+    border-bottom:4px solid #123F24;
+    box-shadow:0 6px 18px rgba(0,0,0,.45);
+    display:flex; align-items:center; gap:18px;
+    padding:0 18px;
+    position:relative; z-index:5;
+  }
+  #gantry .title{
+    font-weight:800; font-size:19px; letter-spacing:.12em;
+    border:2px solid var(--sign-border); border-radius:6px;
+    padding:5px 12px 3px; line-height:1;
+    white-space:nowrap;
+  }
+  .badge{
+    font-weight:700; font-size:12px; letter-spacing:.14em;
+    padding:4px 10px 2px; border-radius:999px; line-height:1;
+    background:rgba(0,0,0,.35);
+  }
+  .badge.live{ color:var(--live); }
+  .badge.demo{ color:var(--amber); }
+  .badge.wait{ color:var(--dim); }
+  #stats{
+    display:flex; gap:16px; margin-left:auto;
+    font-family:'IBM Plex Mono', monospace; font-size:12.5px;
+    color:#DCEBDF; white-space:nowrap;
+  }
+  #stats b{ color:#fff; font-weight:600; }
+  #pauseBtn{
+    font-family:inherit; font-weight:700; font-size:13px; letter-spacing:.08em;
+    color:var(--sign-green); background:var(--sign-border);
+    border:none; border-radius:6px; padding:8px 16px 6px;
+    cursor:pointer;
+  }
+  #pauseBtn:hover{ background:#fff; }
+  #pauseBtn:focus-visible{ outline:3px solid var(--amber); outline-offset:2px; }
+
+  #wrap{ position:relative; height:calc(100% - 58px); }
+  canvas{ display:block; width:100%; height:100%; }
+
+  /* ---- packet inspection tooltip ---- */
+  #tooltip{
+    position:absolute; display:none; z-index:10;
+    max-width:340px; pointer-events:none;
+    background:#111814; color:var(--ink);
+    border:2px solid var(--sign-green); border-radius:8px;
+    padding:10px 12px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; line-height:1.55;
+    box-shadow:0 10px 30px rgba(0,0,0,.6);
+    white-space:pre;
+  }
+  #tooltip .dest{ font-family:'Overpass',sans-serif; font-weight:700; font-size:13px; letter-spacing:.04em; }
+  #tooltip .sec{ color:var(--live); font-weight:600; }
+  #tooltip .insec{ color:var(--amber); }
+
+  /* ---- bottom hint / legend ---- */
+  #hint{
+    position:absolute; left:14px; bottom:12px; z-index:4;
+    font-size:12px; color:var(--dim); letter-spacing:.03em;
+    background:rgba(13,15,18,.72); border-radius:8px; padding:7px 12px 5px;
+    backdrop-filter:blur(2px);
+  }
+  #hint b{ color:var(--ink); font-weight:600; }
+  #paused-stamp{
+    position:absolute; top:14px; right:16px; z-index:4; display:none;
+    font-weight:800; letter-spacing:.2em; font-size:13px;
+    color:#0f1512; background:var(--amber);
+    padding:6px 14px 4px; border-radius:6px;
+  }
+  @media (max-width:760px){
+    #stats span.opt{ display:none; }
+    #gantry .title{ font-size:15px; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    /* content is motion by nature; we keep vehicles but drop light-glow flicker */
+  }
+</style>
+</head>
+<body>
+
+<header id="gantry">
+  <div class="title">NETWORK&nbsp;HIGHWAY</div>
+  <div class="badge wait" id="mode">CONNECTING…</div>
+  <div id="stats">
+    <span><b id="stVeh">0</b> on road</span>
+    <span><b id="stPps">0</b> pkt/s</span>
+    <span class="opt"><b id="stBps">0 B/s</b></span>
+    <span class="opt">🏍 &lt;250 B&nbsp; 🚗 &lt;1.1 KB&nbsp; 🚚 ≥1.1 KB&nbsp; 🛡 encrypted</span>
+  </div>
+  <button id="pauseBtn" aria-pressed="false">⏸ PAUSE</button>
+</header>
+
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="tooltip" role="tooltip"></div>
+  <div id="paused-stamp">TRAFFIC HALTED</div>
+  <div id="hint"><b>Space</b> pauses traffic · while paused, <b>hover any vehicle</b> to inspect its packet</div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   Network Highway — every packet is a vehicle.
+   out  = drives away from YOUR COMPUTER toward the destination's exit
+   in   = drives back to you on the same road's return lane
+   size = motorcycle (<250 B) / car (<1100 B) / truck (≥1100 B)
+   TLS/SSH/etc. = armored defense vehicle
+   ===================================================================== */
+
+const WS_URL = 'ws://localhost:8765';
+const MAX_ROADS = 8;                 // + a shared "OTHER TRAFFIC" road
+const HUB_W = 116;                   // left toll-plaza column
+const SIGN_W = 168;                  // right exit-sign area
+const ROAD_HALF = 30;                // half height of a dual carriageway
+const LANE_OFF = 14;                 // lane centre offset from median
+const MAX_VEHICLES = 240;
+const MAX_SPAWN_PER_BATCH = 30;
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const modeEl = document.getElementById('mode');
+const pauseBtn = document.getElementById('pauseBtn');
+const pausedStamp = document.getElementById('paused-stamp');
+
+let W = 0, H = 0, DPR = 1;
+let paused = false;
+let mouse = { x: -1, y: -1 };
+let hovered = null;
+
+const roads = new Map();             // key -> road
+let roadOrder = [];                  // draw order
+const vehicles = [];
+const recent = [];                   // {t, size} for pkt/s + B/s stats
+
+/* ------------------------------------------------ layout ------- */
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const r = cv.parentElement.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ------------------------------------------------ roads -------- */
+function shortDomain(h) {
+  if (!h) return null;
+  const parts = h.replace(/\.$/, '').toLowerCase().split('.');
+  if (parts.length <= 2) return h.toLowerCase();
+  const sld = new Set(['co', 'com', 'net', 'org', 'gov', 'ac', 'edu', 'nic']);
+  const last = parts[parts.length - 1], second = parts[parts.length - 2];
+  if (last.length === 2 && sld.has(second)) return parts.slice(-3).join('.');
+  return parts.slice(-2).join('.');
+}
+
+function makeRoad(key, label) {
+  return { key, label, y: H + 60, targetY: H + 60,
+           lastActive: performance.now(), tx: 0, rx: 0, out: 0, inn: 0 };
+}
+
+function getRoad(pkt) {
+  const key = shortDomain(pkt.host) || pkt.remote || 'unknown';
+  let road = roads.get(key);
+  if (road) return road;
+
+  if (roads.size < MAX_ROADS) {
+    road = makeRoad(key, key);
+    roads.set(key, road);
+    roadOrder.push(road);
+    return road;
+  }
+  // Recycle the stalest road if it has been quiet for a while…
+  const now = performance.now();
+  let stale = null;
+  for (const r of roads.values()) {
+    if (r.key === 'other') continue;
+    if (now - r.lastActive > 6000 && (!stale || r.lastActive < stale.lastActive)) stale = r;
+  }
+  if (stale) {
+    roads.delete(stale.key);
+    for (let i = vehicles.length - 1; i >= 0; i--)
+      if (vehicles[i].road === stale) vehicles.splice(i, 1);
+    stale.key = key; stale.label = key;
+    stale.tx = stale.rx = stale.out = stale.inn = 0;
+    roads.set(key, stale);
+    return stale;
+  }
+  // …otherwise merge into the shared road.
+  let other = roads.get('other');
+  if (!other) {
+    other = makeRoad('other', 'OTHER TRAFFIC');
+    roads.set('other', other);
+    roadOrder.push(other);
+  }
+  return other;
+}
+
+function layoutRoads() {
+  const n = roadOrder.length;
+  if (!n) return;
+  const top = 26, bottom = 18;
+  const gap = Math.min(96, (H - top - bottom) / n);
+  roadOrder.forEach((r, i) => {
+    r.targetY = top + gap * (i + 0.5);
+    r.y += (r.targetY - r.y) * 0.12;            // glide into place
+  });
+}
+
+/* ------------------------------------------------ vehicles ----- */
+const CIVILIAN_COLORS = ['#C94F4F', '#4F7BC9', '#C9A24F', '#7C56C9',
+                         '#4FC98E', '#D07A3F', '#B8BEC6', '#D06AA8'];
+
+function vehicleType(size) {
+  if (size < 250) return 'moto';
+  if (size < 1100) return 'car';
+  return 'truck';
+}
+
+function spawnVehicle(pkt) {
+  const road = getRoad(pkt);
+  road.lastActive = performance.now();
+  if (pkt.dir === 'out') { road.tx += pkt.size; road.out++; }
+  else { road.rx += pkt.size; road.inn++; }
+
+  const type = vehicleType(pkt.size);
+  const startX = pkt.dir === 'out' ? HUB_W + 10 : W - SIGN_W - 10;
+  const base = type === 'truck' ? 150 : type === 'moto' ? 285 : 215;
+  vehicles.push({
+    road, pkt, type,
+    dir: pkt.dir,
+    x: startX,
+    speed: base * (0.85 + Math.random() * 0.3),
+    color: CIVILIAN_COLORS[(Math.random() * CIVILIAN_COLORS.length) | 0],
+    halfW: type === 'truck' ? 30 : type === 'moto' ? 11 : 19,
+  });
+  if (vehicles.length > MAX_VEHICLES) vehicles.shift();
+
+  recent.push({ t: performance.now(), size: pkt.size });
+}
+
+function updateVehicles(dt) {
+  for (let i = vehicles.length - 1; i >= 0; i--) {
+    const v = vehicles[i];
+    v.x += (v.dir === 'out' ? 1 : -1) * v.speed * dt;
+    if (v.x > W - SIGN_W + 26 || v.x < HUB_W - 26) vehicles.splice(i, 1);
+  }
+}
+
+/* ------------------------------------------------ drawing ------ */
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  layoutRoads();
+
+  for (const r of roadOrder) drawRoad(r);
+  drawHub();
+
+  hovered = null;
+  for (const v of vehicles) {
+    drawVehicle(v);
+    if (paused && !hovered) {
+      const y = laneY(v);
+      if (Math.abs(mouse.x - v.x) < v.halfW + 6 && Math.abs(mouse.y - y) < 16) hovered = v;
+    }
+  }
+  if (paused && hovered) drawHighlight(hovered);
+  updateTooltip();
+}
+
+function laneY(v) {
+  return v.road.y + (v.dir === 'out' ? -LANE_OFF : LANE_OFF);
+}
+
+function drawRoad(r) {
+  const y = r.y, x0 = HUB_W, x1 = W - SIGN_W;
+  // asphalt
+  ctx.fillStyle = '#25282E';
+  ctx.fillRect(x0, y - ROAD_HALF, x1 - x0, ROAD_HALF * 2);
+  // white edge lines
+  ctx.fillStyle = 'rgba(216,214,206,.85)';
+  ctx.fillRect(x0, y - ROAD_HALF + 2, x1 - x0, 2);
+  ctx.fillRect(x0, y + ROAD_HALF - 4, x1 - x0, 2);
+  // double-yellow median
+  ctx.fillStyle = '#E8C34A';
+  ctx.fillRect(x0, y - 2.5, x1 - x0, 1.6);
+  ctx.fillRect(x0, y + 1, x1 - x0, 1.6);
+  // exit board
+  drawExitSign(r);
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+function drawExitSign(r) {
+  const bw = SIGN_W - 24, bh = 44;
+  const bx = W - SIGN_W + 10, by = r.y - bh / 2;
+  // post connecting road to board
+  ctx.fillStyle = '#3A3F47';
+  ctx.fillRect(W - SIGN_W, r.y - 2, 12, 4);
+  // green board
+  ctx.fillStyle = '#1E6B3C';
+  roundRect(bx, by, bw, bh, 7); ctx.fill();
+  ctx.strokeStyle = '#F2F4F0'; ctx.lineWidth = 2;
+  roundRect(bx + 2.5, by + 2.5, bw - 5, bh - 5, 5); ctx.stroke();
+  // domain
+  ctx.fillStyle = '#fff';
+  ctx.font = '700 13px Overpass, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let label = r.label;
+  while (ctx.measureText(label).width > bw - 18 && label.length > 4)
+    label = label.slice(0, -2);
+  if (label !== r.label) label += '…';
+  ctx.fillText(label, bx + bw / 2, by + 15);
+  // traffic totals
+  ctx.font = '600 10.5px "IBM Plex Mono", monospace';
+  ctx.fillStyle = '#CFE5D6';
+  ctx.fillText(`↑ ${fmtBytes(r.tx)}  ↓ ${fmtBytes(r.rx)}`, bx + bw / 2, by + 31);
+}
+
+function drawHub() {
+  ctx.fillStyle = '#121419';
+  ctx.fillRect(0, 0, HUB_W, H);
+  ctx.fillStyle = '#2E333B';
+  ctx.fillRect(HUB_W - 4, 0, 4, H);
+  // glowing connection points where each road meets the hub
+  for (const r of roadOrder) {
+    ctx.fillStyle = 'rgba(255,185,79,.9)';
+    ctx.beginPath(); ctx.arc(HUB_W - 2, r.y - LANE_OFF, 3, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(HUB_W - 2, r.y + LANE_OFF, 3, 0, 7); ctx.fill();
+  }
+  // computer pictogram
+  const cxr = HUB_W / 2, cy = Math.min(74, H * 0.14);
+  ctx.strokeStyle = '#9AA29B'; ctx.lineWidth = 2.5;
+  roundRect(cxr - 22, cy - 18, 44, 30, 4); ctx.stroke();
+  ctx.fillStyle = '#57D98A';
+  ctx.fillRect(cxr - 16, cy - 12, 32, 18);
+  ctx.strokeStyle = '#9AA29B';
+  ctx.beginPath(); ctx.moveTo(cxr - 12, cy + 19); ctx.lineTo(cxr + 12, cy + 19); ctx.stroke();
+  ctx.fillStyle = '#F2F4F0';
+  ctx.font = '800 12px Overpass, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('YOUR', cxr, cy + 40);
+  ctx.fillText('COMPUTER', cxr, cy + 54);
+}
+
+/* ----- vehicle sprites (drawn facing right, mirrored for inbound) ----- */
+function drawVehicle(v) {
+  const y = laneY(v);
+  ctx.save();
+  ctx.translate(v.x, y);
+  if (v.dir === 'in') ctx.scale(-1, 1);
+
+  // headlight cone
+  ctx.fillStyle = 'rgba(255,233,168,.14)';
+  ctx.beginPath();
+  ctx.moveTo(v.halfW - 2, -2);
+  ctx.lineTo(v.halfW + 34, -8);
+  ctx.lineTo(v.halfW + 34, 6);
+  ctx.lineTo(v.halfW - 2, 3);
+  ctx.closePath(); ctx.fill();
+
+  if (v.pkt.secure) drawArmored(v); else drawCivilian(v);
+
+  // headlight + taillight dots
+  ctx.fillStyle = '#FFE9A8';
+  ctx.fillRect(v.halfW - 3, -3, 3, 3);
+  ctx.fillStyle = '#E5484D';
+  ctx.fillRect(-v.halfW, -3, 2.5, 3);
+  ctx.restore();
+}
+
+function wheel(x, r) {
+  ctx.fillStyle = '#15171A';
+  ctx.beginPath(); ctx.arc(x, 6, r, 0, 7); ctx.fill();
+  ctx.fillStyle = '#4B5058';
+  ctx.beginPath(); ctx.arc(x, 6, r * 0.45, 0, 7); ctx.fill();
+}
+
+function drawCivilian(v) {
+  if (v.type === 'moto') {
+    wheel(-7, 3.5); wheel(7, 3.5);
+    ctx.strokeStyle = v.color; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-7, 5); ctx.lineTo(0, 0); ctx.lineTo(7, 4); ctx.stroke();
+    ctx.fillStyle = v.color;
+    ctx.beginPath(); ctx.arc(-1, -5, 2.6, 0, 7); ctx.fill();      // rider
+  } else if (v.type === 'car') {
+    wheel(-10, 4.5); wheel(10, 4.5);
+    ctx.fillStyle = v.color;
+    roundRect(-18, -5, 36, 10, 3.5); ctx.fill();
+    roundRect(-9, -12, 18, 9, 3.5); ctx.fill();                   // cabin
+    ctx.fillStyle = '#BFD9F2';
+    ctx.fillRect(-6, -10, 12, 5);                                 // windows
+  } else { // truck
+    wheel(-22, 5); wheel(-10, 5); wheel(16, 5);
+    ctx.fillStyle = '#C9CDD4';                                    // trailer
+    roundRect(-30, -15, 38, 21, 2.5); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.lineWidth = 1;
+    for (let i = -26; i < 6; i += 5) {
+      ctx.beginPath(); ctx.moveTo(i, -13); ctx.lineTo(i, 4); ctx.stroke();
+    }
+    ctx.fillStyle = v.color;                                      // cab
+    roundRect(10, -12, 18, 18, 3); ctx.fill();
+    ctx.fillStyle = '#BFD9F2';
+    ctx.fillRect(20, -10, 6, 7);
+  }
+}
+
+function drawArmored(v) {
+  ctx.fillStyle = '#4A5D3A';
+  ctx.strokeStyle = '#2E3B24'; ctx.lineWidth = 1.5;
+  if (v.type === 'truck') {
+    wheel(-22, 5); wheel(-11, 5); wheel(0, 5); wheel(16, 5);
+    ctx.beginPath();                                              // angular hull
+    ctx.moveTo(-30, 4); ctx.lineTo(-30, -8); ctx.lineTo(-24, -15);
+    ctx.lineTo(6, -15); ctx.lineTo(10, -8);
+    ctx.lineTo(12, -12); ctx.lineTo(26, -12); ctx.lineTo(30, -4);
+    ctx.lineTo(30, 4); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#37452B';                                    // hatch
+    ctx.fillRect(-14, -19, 12, 5);
+  } else {
+    wheel(-10, 4.5); wheel(10, 4.5);
+    ctx.beginPath();
+    ctx.moveTo(-17, 4); ctx.lineTo(-17, -4); ctx.lineTo(-11, -11);
+    ctx.lineTo(9, -11); ctx.lineTo(17, -3); ctx.lineTo(17, 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#C9D6BC';                                    // vision slit
+    ctx.fillRect(-4, -9, 10, 2.5);
+  }
+  // shield emblem
+  const sx = v.type === 'truck' ? -12 : -1;
+  ctx.fillStyle = '#EDE9D8';
+  ctx.beginPath();
+  ctx.moveTo(sx - 3.5, -6); ctx.lineTo(sx + 3.5, -6);
+  ctx.lineTo(sx + 3.5, -1.5); ctx.lineTo(sx, 2); ctx.lineTo(sx - 3.5, -1.5);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#37452B'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(sx - 1.6, -3.6); ctx.lineTo(sx - 0.3, -2);
+  ctx.lineTo(sx + 2, -5); ctx.stroke();
+}
+
+function drawHighlight(v) {
+  const y = laneY(v);
+  ctx.strokeStyle = '#FFB94F'; ctx.lineWidth = 2;
+  ctx.setLineDash([5, 4]);
+  roundRect(v.x - v.halfW - 6, y - 20, v.halfW * 2 + 12, 32, 6);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ------------------------------------------------ tooltip ------ */
+function updateTooltip() {
+  if (!paused || !hovered) { tooltip.style.display = 'none'; return; }
+  const p = hovered.pkt;
+  const t = new Date(p.ts * 1000);
+  const hh = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0');
+  const secLabel = p.secure
+    ? '<span class="sec">🛡 ENCRYPTED (secure port)</span>'
+    : '<span class="insec">PLAINTEXT</span>';
+  const arrow = p.dir === 'out' ? 'OUT →' : '← IN ';
+  const sp = p.sport != null ? ':' + p.sport : '';
+  const dp = p.dport != null ? ':' + p.dport : '';
+  tooltip.innerHTML =
+    `<span class="dest">${esc(hovered.road.label)}</span>  ${secLabel}\n` +
+    `${arrow}  ${esc(p.src)}${sp} → ${esc(p.dst)}${dp}\n` +
+    `${p.proto} · ${p.size.toLocaleString()} bytes · ${hovered.type}` +
+    (p.host ? `\nhost  ${esc(p.host)}` : '') +
+    `\ntime  ${hh}`;
+  tooltip.style.display = 'block';
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  let tx = mouse.x + 16, ty = mouse.y - th - 12;
+  if (tx + tw > W - 8) tx = mouse.x - tw - 16;
+  if (ty < 8) ty = mouse.y + 18;
+  tooltip.style.left = tx + 'px';
+  tooltip.style.top = ty + 'px';
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+/* ------------------------------------------------ input -------- */
+cv.addEventListener('mousemove', e => {
+  const r = cv.getBoundingClientRect();
+  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
+  if (paused) draw();                       // re-hit-test while frozen
+});
+cv.addEventListener('mouseleave', () => { mouse.x = mouse.y = -1; if (paused) draw(); });
+
+function setPaused(p) {
+  paused = p;
+  pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE';
+  pauseBtn.setAttribute('aria-pressed', String(paused));
+  pausedStamp.style.display = paused ? 'block' : 'none';
+  cv.style.cursor = paused ? 'crosshair' : 'default';
+}
+pauseBtn.addEventListener('click', () => setPaused(!paused));
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); setPaused(!paused); }
+});
+
+/* ------------------------------------------------ stats -------- */
+function updateStats() {
+  const now = performance.now();
+  while (recent.length && now - recent[0].t > 2000) recent.shift();
+  const pps = Math.round(recent.length / 2);
+  const bps = recent.reduce((a, r) => a + r.size, 0) / 2;
+  document.getElementById('stVeh').textContent = vehicles.length;
+  document.getElementById('stPps').textContent = pps;
+  document.getElementById('stBps').textContent = fmtBytes(Math.round(bps)) + '/s';
+}
+setInterval(updateStats, 500);
+
+/* ------------------------------------------------ main loop ---- */
+let lastT = performance.now();
+function frame(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000);
+  lastT = t;
+  if (!paused) { updateVehicles(dt); draw(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ------------------------------------------------ data feed ---- */
+function setMode(cls, text) { modeEl.className = 'badge ' + cls; modeEl.textContent = text; }
+
+let demoTimer = null;
+let everConnected = false;
+
+function connect() {
+  let ws;
+  try { ws = new WebSocket(WS_URL); } catch { startDemo(); return; }
+
+  const failTimer = setTimeout(() => { if (ws.readyState !== 1) ws.close(); }, 1800);
+
+  ws.onopen = () => {
+    clearTimeout(failTimer);
+    everConnected = true;
+    stopDemo();
+    setMode('live', 'LIVE CAPTURE');
+  };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type !== 'packets') return;
+    const items = msg.items.length > MAX_SPAWN_PER_BATCH
+      ? msg.items.filter((_, i) => i % Math.ceil(msg.items.length / MAX_SPAWN_PER_BATCH) === 0)
+      : msg.items;
+    for (const p of items) spawnVehicle(p);
+  };
+  ws.onclose = () => {
+    clearTimeout(failTimer);
+    if (everConnected) {
+      setMode('wait', 'RECONNECTING…');
+      setTimeout(connect, 3000);
+    } else startDemo();
+  };
+  ws.onerror = () => {};
+}
+
+/* Demo traffic so the page works with a double-click, backend or not. */
+const DEMO_HOSTS = [
+  { host: 'google.com',       ip: '142.250.183.14', port: 443, secure: true,  weight: 4, big: .35 },
+  { host: 'youtube.com',      ip: '142.250.183.78', port: 443, secure: true,  weight: 3, big: .75 },
+  { host: 'github.com',       ip: '140.82.112.3',   port: 443, secure: true,  weight: 2, big: .4  },
+  { host: 'api.anthropic.com',ip: '160.79.104.10',  port: 443, secure: true,  weight: 2, big: .5  },
+  { host: 'dns.google',       ip: '8.8.8.8',        port: 53,  secure: false, weight: 3, big: 0   },
+  { host: 'example.com',      ip: '93.184.215.14',  port: 80,  secure: false, weight: 1, big: .3  },
+  { host: 'pool.ntp.org',     ip: '162.159.200.1',  port: 123, secure: false, weight: 1, big: 0   },
+];
+function demoSize(big) {
+  if (Math.random() < big) return 1100 + (Math.random() * 12000 | 0);   // truck
+  return Math.random() < 0.5 ? 60 + (Math.random() * 180 | 0)           // moto
+                             : 260 + (Math.random() * 800 | 0);         // car
+}
+function startDemo() {
+  if (demoTimer) return;
+  setMode('demo', 'DEMO TRAFFIC');
+  const bag = DEMO_HOSTS.flatMap(h => Array(h.weight).fill(h));
+  demoTimer = setInterval(() => {
+    if (paused || Math.random() < 0.25) return;
+    const h = bag[(Math.random() * bag.length) | 0];
+    const sport = 49152 + ((Math.random() * 16000) | 0);
+    const out = {
+      ts: Date.now() / 1000, dir: 'out',
+      src: '192.168.1.7', dst: h.ip, sport, dport: h.port,
+      proto: h.port === 53 || h.port === 123 ? 'UDP' : 'TCP',
+      size: demoSize(h.big), secure: h.secure, remote: h.ip, host: h.host,
+    };
+    spawnVehicle(out);
+    const replies = 1 + (Math.random() * (h.big > 0.5 ? 3 : 1) | 0);
+    for (let i = 1; i <= replies; i++) {
+      setTimeout(() => {
+        if (paused) return;
+        spawnVehicle({ ...out, ts: Date.now() / 1000, dir: 'in',
+                       src: h.ip, dst: '192.168.1.7',
+                       sport: h.port, dport: sport, size: demoSize(h.big) });
+      }, 120 * i + Math.random() * 260);
+    }
+  }, 130);
+}
+function stopDemo() {
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+}
+
+connect();
+</script>
+</body>
+</html>
