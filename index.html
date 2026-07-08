@@ -3,90 +3,58 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Network Highway — live traffic visualizer</title>
+<title>Network Highway 3D — live traffic visualizer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
   :root{
-    --night:#17191D;          /* sky over the highway */
-    --asphalt:#25282E;
-    --asphalt-edge:#D8D6CE;   /* white edge lines */
-    --lane-paint:#E8C34A;     /* yellow median */
-    --sign-green:#1E6B3C;     /* highway exit boards */
-    --sign-border:#F2F4F0;
-    --armor:#4A5D3A;          /* defense olive */
-    --amber:#FFB94F;          /* sodium-vapor lights / demo badge */
-    --live:#57D98A;
-    --ink:#F2F4F0;
-    --dim:#9AA29B;
+    --night:#17191D; --sign-green:#1E6B3C; --sign-border:#F2F4F0;
+    --amber:#FFB94F; --live:#57D98A; --ink:#F2F4F0; --dim:#9AA29B;
   }
   *{ margin:0; padding:0; box-sizing:border-box; }
   html,body{ height:100%; }
-  body{
-    background:var(--night);
-    color:var(--ink);
-    font-family:'Overpass', 'Segoe UI', system-ui, sans-serif;
-    overflow:hidden;
-  }
+  body{ background:var(--night); color:var(--ink);
+        font-family:'Overpass','Segoe UI',system-ui,sans-serif; overflow:hidden; }
 
-  /* ---- overhead gantry sign (header) ---- */
   #gantry{
-    height:58px;
-    background:linear-gradient(#237A46, var(--sign-green));
-    border-bottom:4px solid #123F24;
-    box-shadow:0 6px 18px rgba(0,0,0,.45);
-    display:flex; align-items:center; gap:18px;
-    padding:0 18px;
+    height:58px; background:linear-gradient(#237A46, var(--sign-green));
+    border-bottom:4px solid #123F24; box-shadow:0 6px 18px rgba(0,0,0,.45);
+    display:flex; align-items:center; gap:18px; padding:0 18px;
     position:relative; z-index:5;
   }
   #gantry .title{
     font-weight:800; font-size:19px; letter-spacing:.12em;
     border:2px solid var(--sign-border); border-radius:6px;
-    padding:5px 12px 3px; line-height:1;
-    white-space:nowrap;
+    padding:5px 12px 3px; line-height:1; white-space:nowrap;
   }
-  .badge{
-    font-weight:700; font-size:12px; letter-spacing:.14em;
-    padding:4px 10px 2px; border-radius:999px; line-height:1;
-    background:rgba(0,0,0,.35);
-  }
-  .badge.live{ color:var(--live); }
-  .badge.demo{ color:var(--amber); }
-  .badge.wait{ color:var(--dim); }
-  #stats{
-    display:flex; gap:16px; margin-left:auto;
-    font-family:'IBM Plex Mono', monospace; font-size:12.5px;
-    color:#DCEBDF; white-space:nowrap;
-  }
+  .badge{ font-weight:700; font-size:12px; letter-spacing:.14em;
+          padding:4px 10px 2px; border-radius:999px; line-height:1;
+          background:rgba(0,0,0,.35); }
+  .badge.live{ color:var(--live); } .badge.demo{ color:var(--amber); } .badge.wait{ color:var(--dim); }
+  #stats{ display:flex; gap:16px; margin-left:auto;
+          font-family:'IBM Plex Mono',monospace; font-size:12.5px;
+          color:#DCEBDF; white-space:nowrap; }
   #stats b{ color:#fff; font-weight:600; }
-  #pauseBtn{
-    font-family:inherit; font-weight:700; font-size:13px; letter-spacing:.08em;
-    color:var(--sign-green); background:var(--sign-border);
-    border:none; border-radius:6px; padding:8px 16px 6px;
-    cursor:pointer;
-  }
+  #pauseBtn{ font-family:inherit; font-weight:700; font-size:13px; letter-spacing:.08em;
+             color:var(--sign-green); background:var(--sign-border);
+             border:none; border-radius:6px; padding:8px 16px 6px; cursor:pointer; }
   #pauseBtn:hover{ background:#fff; }
   #pauseBtn:focus-visible{ outline:3px solid var(--amber); outline-offset:2px; }
 
   #wrap{ position:relative; height:calc(100% - 58px); }
-  canvas{ display:block; width:100%; height:100%; }
+  #wrap canvas{ display:block; }
 
-  /* ---- packet inspection tooltip ---- */
   #tooltip{
-    position:absolute; display:none; z-index:10;
-    max-width:340px; pointer-events:none;
+    position:absolute; display:none; z-index:10; max-width:360px; pointer-events:none;
     background:#111814; color:var(--ink);
-    border:2px solid var(--sign-green); border-radius:8px;
-    padding:10px 12px;
-    font-family:'IBM Plex Mono', monospace; font-size:12px; line-height:1.55;
-    box-shadow:0 10px 30px rgba(0,0,0,.6);
-    white-space:pre;
+    border:2px solid var(--sign-green); border-radius:8px; padding:10px 12px;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.55;
+    box-shadow:0 10px 30px rgba(0,0,0,.6); white-space:pre;
   }
   #tooltip .dest{ font-family:'Overpass',sans-serif; font-weight:700; font-size:13px; letter-spacing:.04em; }
-  #tooltip .sec{ color:var(--live); font-weight:600; }
-  #tooltip .insec{ color:var(--amber); }
+  #tooltip .sec{ color:var(--live); font-weight:600; } #tooltip .insec{ color:var(--amber); }
 
-  /* ---- bottom hint / legend ---- */
   #hint{
     position:absolute; left:14px; bottom:12px; z-index:4;
     font-size:12px; color:var(--dim); letter-spacing:.03em;
@@ -97,22 +65,15 @@
   #paused-stamp{
     position:absolute; top:14px; right:16px; z-index:4; display:none;
     font-weight:800; letter-spacing:.2em; font-size:13px;
-    color:#0f1512; background:var(--amber);
-    padding:6px 14px 4px; border-radius:6px;
+    color:#0f1512; background:var(--amber); padding:6px 14px 4px; border-radius:6px;
   }
-  @media (max-width:760px){
-    #stats span.opt{ display:none; }
-    #gantry .title{ font-size:15px; }
-  }
-  @media (prefers-reduced-motion: reduce){
-    /* content is motion by nature; we keep vehicles but drop light-glow flicker */
-  }
+  @media (max-width:760px){ #stats span.opt{ display:none; } #gantry .title{ font-size:15px; } }
 </style>
 </head>
 <body>
 
 <header id="gantry">
-  <div class="title">NETWORK&nbsp;HIGHWAY</div>
+  <div class="title">NETWORK&nbsp;HIGHWAY&nbsp;3D</div>
   <div class="badge wait" id="mode">CONNECTING…</div>
   <div id="stats">
     <span><b id="stVeh">0</b> on road</span>
@@ -124,60 +85,218 @@
 </header>
 
 <div id="wrap">
-  <canvas id="cv"></canvas>
   <div id="tooltip" role="tooltip"></div>
   <div id="paused-stamp">TRAFFIC HALTED</div>
-  <div id="hint"><b>Space</b> pauses traffic · while paused, <b>hover any vehicle</b> to inspect its packet</div>
+  <div id="hint"><b>Drag</b> to orbit · <b>scroll</b> to zoom · <b>Space</b> pauses ·
+    while paused, <b>hover a vehicle</b> to inspect · <b>R</b> resets camera</div>
 </div>
 
 <script>
 'use strict';
 /* =====================================================================
-   Network Highway — every packet is a vehicle.
-   out  = drives away from YOUR COMPUTER toward the destination's exit
-   in   = drives back to you on the same road's return lane
-   size = motorcycle (<250 B) / car (<1100 B) / truck (≥1100 B)
-   TLS/SSH/etc. = armored defense vehicle
+   Network Highway 3D — every packet is a vehicle.
+   out = drives from YOUR COMPUTER toward the destination's exit sign
+   in  = comes home on the same road's return lane
+   Bursts from one flow merge into a single vehicle (hover shows count),
+   and vehicles keep a safe following distance — no more pile-ups.
    ===================================================================== */
 
 const WS_URL = 'ws://localhost:8765';
-const MAX_ROADS = 8;                 // + a shared "OTHER TRAFFIC" road
-const HUB_W = 116;                   // left toll-plaza column
-const SIGN_W = 168;                  // right exit-sign area
-const ROAD_HALF = 30;                // half height of a dual carriageway
-const LANE_OFF = 14;                 // lane centre offset from median
-const MAX_VEHICLES = 240;
+const MAX_ROADS = 8;                    // + shared "OTHER TRAFFIC" road
+const MAX_VEHICLES = 220;
 const MAX_SPAWN_PER_BATCH = 30;
+const MAX_PER_LANE = 32;                // beyond this, packets merge into the rear vehicle
 
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
+const ROAD_LEN = 392, ROAD_END = ROAD_LEN / 2;   // x from -196 … +196
+const ROAD_W = 16, ROAD_GAP = 30, LANE_OFF = 4;
+const AGG_WINDOW = 450;                 // ms — same-flow packets merge within this
+const AGG_ZONE = 60;                    // …while the vehicle is still near its spawn
+
+const SIZES = { moto: 4, car: 8, truck: 15, acar: 8.2, atruck: 15.5 };  // lengths
+const SPEEDS = { moto: 72, car: 56, truck: 42, acar: 54, atruck: 40 };
+
+/* ------------------------------------------------ three.js scene --- */
+const wrap = document.getElementById('wrap');
 const tooltip = document.getElementById('tooltip');
 const modeEl = document.getElementById('mode');
 const pauseBtn = document.getElementById('pauseBtn');
 const pausedStamp = document.getElementById('paused-stamp');
 
-let W = 0, H = 0, DPR = 1;
-let paused = false;
-let mouse = { x: -1, y: -1 };
-let hovered = null;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x17191d);
+wrap.appendChild(renderer.domElement);
 
-const roads = new Map();             // key -> road
-let roadOrder = [];                  // draw order
-const vehicles = [];
-const recent = [];                   // {t, size} for pkt/s + B/s stats
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x17191d, 700, 1400);
 
-/* ------------------------------------------------ layout ------- */
+const camera = new THREE.PerspectiveCamera(50, 1, 1, 3000);
+scene.add(new THREE.HemisphereLight(0x8fa3c4, 0x1c1e22, 0.95));
+const sun = new THREE.DirectionalLight(0xfff2dd, 0.65);
+sun.position.set(180, 320, 220);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(1800, 1000),
+  new THREE.MeshLambertMaterial({ color: 0x101216 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.3;
+scene.add(ground);
+
+const vehicleLayer = new THREE.Group();
+scene.add(vehicleLayer);
+
+/* ------------------------------------------------ orbit camera ----- */
+const HOME = { theta: Math.PI / 2, phi: 0.92, r: 430 };
+const cam = { ...HOME, target: new THREE.Vector3(0, 0, 0) };
+function applyCamera() {
+  cam.phi = Math.min(1.45, Math.max(0.12, cam.phi));
+  cam.r = Math.min(1100, Math.max(90, cam.r));
+  camera.position.set(
+    cam.target.x + cam.r * Math.sin(cam.phi) * Math.cos(cam.theta),
+    cam.target.y + cam.r * Math.cos(cam.phi),
+    cam.target.z + cam.r * Math.sin(cam.phi) * Math.sin(cam.theta)
+  );
+  camera.lookAt(cam.target);
+}
+let dragging = false, lastPX = 0, lastPY = 0;
+renderer.domElement.addEventListener('pointerdown', e => {
+  dragging = true; lastPX = e.clientX; lastPY = e.clientY;
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+window.addEventListener('pointerup', () => dragging = false);
+window.addEventListener('pointermove', e => {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.sx = e.clientX - r.left; mouse.sy = e.clientY - r.top;
+  mouse.x = (mouse.sx / r.width) * 2 - 1;
+  mouse.y = -(mouse.sy / r.height) * 2 + 1;
+  if (!dragging) return;
+  cam.theta += (e.clientX - lastPX) * 0.0045;
+  cam.phi   -= (e.clientY - lastPY) * 0.0045;
+  lastPX = e.clientX; lastPY = e.clientY;
+  applyCamera();
+});
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.r *= Math.exp(e.deltaY * 0.0011);
+  applyCamera();
+}, { passive: false });
+
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
-  const r = cv.parentElement.getBoundingClientRect();
-  W = r.width; H = r.height;
-  cv.width = W * DPR; cv.height = H * DPR;
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const r = wrap.getBoundingClientRect();
+  renderer.setSize(r.width, r.height);
+  camera.aspect = r.width / r.height;
+  camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
-resize();
+resize(); applyCamera();
 
-/* ------------------------------------------------ roads -------- */
+/* ------------------------------------------------ helpers ---------- */
+const mouse = { x: 0, y: 0, sx: -1, sy: -1 };
+const raycaster = new THREE.Raycaster();
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function rr(c, x, y, w, h, r) {           // canvas rounded rect w/ fallback
+  if (c.roundRect) { c.beginPath(); c.roundRect(x, y, w, h, r); }
+  else { c.beginPath(); c.rect(x, y, w, h); }
+}
+
+/* ------------------------------------------------ signs & hub ------ */
+function makeBoardSprite(scaleX, scaleY) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 170;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
+  sprite.scale.set(scaleX, scaleY, 1);
+  sprite.userData.canvas = canvas;
+  sprite.userData.texture = texture;
+  return sprite;
+}
+function paintSign(sprite, label, tx, rx) {
+  const c = sprite.userData.canvas.getContext('2d');
+  c.clearRect(0, 0, 512, 170);
+  c.fillStyle = '#1E6B3C'; rr(c, 4, 4, 504, 162, 18); c.fill();
+  c.strokeStyle = '#F2F4F0'; c.lineWidth = 7; rr(c, 14, 14, 484, 142, 12); c.stroke();
+  c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = '700 52px Overpass, sans-serif';
+  let t = label;
+  while (c.measureText(t).width > 440 && t.length > 4) t = t.slice(0, -2);
+  if (t !== label) t += '…';
+  c.fillText(t, 256, 62);
+  c.font = '600 34px "IBM Plex Mono", monospace';
+  c.fillStyle = '#CFE5D6';
+  c.fillText(`↑ ${fmtBytes(tx)}  ↓ ${fmtBytes(rx)}`, 256, 118);
+  sprite.userData.texture.needsUpdate = true;
+}
+
+const roadGeo = new THREE.BoxGeometry(ROAD_LEN, 0.4, ROAD_W);
+const roadMat = new THREE.MeshLambertMaterial({ color: 0x25282e });
+const edgeGeo = new THREE.BoxGeometry(ROAD_LEN, 0.12, 0.5);
+const edgeMat = new THREE.MeshLambertMaterial({ color: 0xd8d6ce });
+const midMat  = new THREE.MeshLambertMaterial({ color: 0xe8c34a });
+const postGeo = new THREE.CylinderGeometry(0.5, 0.5, 12, 8);
+const postMat = new THREE.MeshLambertMaterial({ color: 0x3a3f47 });
+
+function buildRoadGroup() {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(roadGeo, roadMat));
+  const eTop = new THREE.Mesh(edgeGeo, edgeMat); eTop.position.set(0, 0.25, -ROAD_W/2 + 0.6);
+  const eBot = new THREE.Mesh(edgeGeo, edgeMat); eBot.position.set(0, 0.25,  ROAD_W/2 - 0.6);
+  const m1 = new THREE.Mesh(edgeGeo, midMat); m1.position.set(0, 0.25, -0.7);
+  const m2 = new THREE.Mesh(edgeGeo, midMat); m2.position.set(0, 0.25,  0.7);
+  g.add(eTop, eBot, m1, m2);
+  for (const dz of [-6, 6]) {
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(ROAD_END + 10, 6, dz);
+    g.add(post);
+  }
+  const sign = makeBoardSprite(32, 10.6);
+  sign.position.set(ROAD_END + 10, 15, 0);
+  g.add(sign);
+  g.userData.sign = sign;
+  return g;
+}
+
+/* hub — YOUR COMPUTER */
+const hub = new THREE.Group();
+{
+  const bld = new THREE.Mesh(new THREE.BoxGeometry(14, 15, 60),
+                             new THREE.MeshLambertMaterial({ color: 0x1b1e24 }));
+  bld.position.set(-(ROAD_END + 15), 7.5, 0);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(3, 42),
+    new THREE.MeshLambertMaterial({ color: 0x57d98a, emissive: 0x2f8f57 }));
+  screen.rotation.y = Math.PI / 2;
+  screen.rotation.z = Math.PI / 2;
+  screen.position.set(-(ROAD_END + 7.8), 9, 0);
+  const label = makeBoardSprite(34, 11.3);
+  label.position.set(-(ROAD_END + 15), 21, 0);
+  const c = label.userData.canvas.getContext('2d');
+  c.fillStyle = '#121419'; rr(c, 4, 24, 504, 122, 16); c.fill();
+  c.strokeStyle = '#57D98A'; c.lineWidth = 5; rr(c, 12, 32, 488, 106, 12); c.stroke();
+  c.fillStyle = '#F2F4F0'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = '800 54px Overpass, sans-serif';
+  c.fillText('YOUR COMPUTER', 256, 86);
+  label.userData.texture.needsUpdate = true;
+  hub.add(bld, screen, label);
+  hub.userData = { bld, label };
+}
+scene.add(hub);
+
+/* ------------------------------------------------ roads ------------ */
+const roads = new Map();
+let roadOrder = [];
+const dirtySigns = new Set();
+
 function shortDomain(h) {
   if (!h) return null;
   const parts = h.replace(/\.$/, '').toLowerCase().split('.');
@@ -189,8 +308,13 @@ function shortDomain(h) {
 }
 
 function makeRoad(key, label) {
-  return { key, label, y: H + 60, targetY: H + 60,
-           lastActive: performance.now(), tx: 0, rx: 0, out: 0, inn: 0 };
+  const group = buildRoadGroup();
+  group.position.z = (roadOrder.length + 2) * ROAD_GAP + 120;   // slide in from far side
+  scene.add(group);
+  const r = { key, label, group, targetZ: 0,
+              lastActive: performance.now(), tx: 0, rx: 0 };
+  paintSign(group.userData.sign, label, 0, 0);
+  return r;
 }
 
 function getRoad(pkt) {
@@ -200,11 +324,9 @@ function getRoad(pkt) {
 
   if (roads.size < MAX_ROADS) {
     road = makeRoad(key, key);
-    roads.set(key, road);
-    roadOrder.push(road);
+    roads.set(key, road); roadOrder.push(road);
     return road;
   }
-  // Recycle the stalest road if it has been quiet for a while…
   const now = performance.now();
   let stale = null;
   for (const r of roads.values()) {
@@ -214,292 +336,305 @@ function getRoad(pkt) {
   if (stale) {
     roads.delete(stale.key);
     for (let i = vehicles.length - 1; i >= 0; i--)
-      if (vehicles[i].road === stale) vehicles.splice(i, 1);
-    stale.key = key; stale.label = key;
-    stale.tx = stale.rx = stale.out = stale.inn = 0;
+      if (vehicles[i].road === stale) removeVehicle(i);
+    stale.key = key; stale.label = key; stale.tx = stale.rx = 0;
     roads.set(key, stale);
+    dirtySigns.add(stale);
     return stale;
   }
-  // …otherwise merge into the shared road.
   let other = roads.get('other');
   if (!other) {
     other = makeRoad('other', 'OTHER TRAFFIC');
-    roads.set('other', other);
-    roadOrder.push(other);
+    roads.set('other', other); roadOrder.push(other);
   }
   return other;
 }
 
 function layoutRoads() {
   const n = roadOrder.length;
-  if (!n) return;
-  const top = 26, bottom = 18;
-  const gap = Math.min(96, (H - top - bottom) / n);
   roadOrder.forEach((r, i) => {
-    r.targetY = top + gap * (i + 0.5);
-    r.y += (r.targetY - r.y) * 0.12;            // glide into place
+    r.targetZ = (i - (n - 1) / 2) * ROAD_GAP;
+    r.group.position.z += (r.targetZ - r.group.position.z) * 0.1;
   });
+  const depth = Math.max(60, n * ROAD_GAP + 30);
+  hub.userData.bld.scale.z = depth / 60;
 }
 
-/* ------------------------------------------------ vehicles ----- */
-const CIVILIAN_COLORS = ['#C94F4F', '#4F7BC9', '#C9A24F', '#7C56C9',
-                         '#4FC98E', '#D07A3F', '#B8BEC6', '#D06AA8'];
+/* ------------------------------------------------ vehicle meshes --- */
+const CIVILIAN_COLORS = [0xc94f4f, 0x4f7bc9, 0xc9a24f, 0x7c56c9,
+                         0x4fc98e, 0xd07a3f, 0xb8bec6, 0xd06aa8];
+const WHEEL_MAT = new THREE.MeshLambertMaterial({ color: 0x15171a });
+const TRAILER_MAT = new THREE.MeshLambertMaterial({ color: 0xc9cdd4 });
+const ARMOR_MAT = new THREE.MeshLambertMaterial({ color: 0x4a5d3a });
+const ARMOR_DK = new THREE.MeshLambertMaterial({ color: 0x37452b });
+const SHIELD_MAT = new THREE.MeshLambertMaterial({ color: 0xede9d8 });
+const HEAD_MAT = new THREE.MeshLambertMaterial({ color: 0xffe9a8, emissive: 0xd8b45e });
+const TAIL_MAT = new THREE.MeshLambertMaterial({ color: 0xe5484d, emissive: 0xa22 });
+const wheelGeo = new THREE.CylinderGeometry(0.95, 0.95, 0.7, 10);
 
-function vehicleType(size) {
-  if (size < 250) return 'moto';
-  if (size < 1100) return 'car';
-  return 'truck';
+function addWheels(g, xs, halfZ, r = 0.95) {
+  for (const x of xs) for (const z of [halfZ, -halfZ]) {
+    const w = new THREE.Mesh(wheelGeo, WHEEL_MAT);
+    w.rotation.x = Math.PI / 2;
+    w.scale.setScalar(r / 0.95);
+    w.position.set(x, r, z);
+    g.add(w);
+  }
+}
+function addLamps(g, frontX, backX, y, z) {
+  for (const s of [z, -z]) {
+    const h = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.5, 0.7), HEAD_MAT);
+    h.position.set(frontX, y, s); g.add(h);
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.45, 0.7), TAIL_MAT);
+    t.position.set(backX, y, s); g.add(t);
+  }
+}
+function paintable(mesh, list) { list.push(mesh); return mesh; }
+
+const builders = {
+  car() {
+    const g = new THREE.Group(), p = [];
+    const bodyM = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const body = paintable(new THREE.Mesh(new THREE.BoxGeometry(7, 1.6, 3.4), bodyM), p);
+    body.position.y = 1.6; g.add(body);
+    const cabin = paintable(new THREE.Mesh(new THREE.BoxGeometry(3.8, 1.3, 3), bodyM), p);
+    cabin.position.set(-0.4, 2.9, 0); g.add(cabin);
+    addWheels(g, [-2.3, 2.3], 1.75);
+    addLamps(g, 3.5, -3.5, 1.6, 1.1);
+    g.userData.paint = p;
+    return g;
+  },
+  truck() {
+    const g = new THREE.Group(), p = [];
+    const cabM = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const trailer = new THREE.Mesh(new THREE.BoxGeometry(9.5, 3.4, 3.6), TRAILER_MAT);
+    trailer.position.set(-2.2, 2.5, 0); g.add(trailer);
+    const cab = paintable(new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.8, 3.4), cabM), p);
+    cab.position.set(4.9, 2.1, 0); g.add(cab);
+    addWheels(g, [-5.6, -3, 0.2, 4.9], 1.8, 1.05);
+    addLamps(g, 6.75, -6.95, 1.6, 1.1);
+    g.userData.paint = p;
+    return g;
+  },
+  moto() {
+    const g = new THREE.Group(), p = [];
+    const bodyM = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const body = paintable(new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.7, 0.9), bodyM), p);
+    body.position.y = 1.3; g.add(body);
+    const rider = paintable(new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 0.9), bodyM), p);
+    rider.position.set(-0.4, 2.3, 0); g.add(rider);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 8),
+                                new THREE.MeshLambertMaterial({ color: 0x15171a }));
+    head.position.set(-0.2, 3.2, 0); g.add(head);
+    addWheels(g, [-1.3, 1.3], 0, 0.72);
+    addLamps(g, 1.55, -1.5, 1.3, 0.15);
+    g.userData.paint = p;
+    return g;
+  },
+  acar() {
+    const g = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(7.4, 2.1, 3.6), ARMOR_MAT);
+    hull.position.y = 2; g.add(hull);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.1, 3.1), ARMOR_DK);
+    top.position.set(-0.3, 3.5, 0); g.add(top);
+    for (const s of [1.86, -1.86]) {
+      const shield = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.3, 0.12), SHIELD_MAT);
+      shield.position.set(0.4, 2.1, s); g.add(shield);
+    }
+    addWheels(g, [-2.4, 2.4], 1.8, 1.05);
+    addLamps(g, 3.75, -3.75, 2, 1.15);
+    g.userData.paint = [];
+    return g;
+  },
+  atruck() {
+    const g = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(12.6, 2.7, 3.8), ARMOR_MAT);
+    hull.position.y = 2.3; g.add(hull);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.7, 3.4), ARMOR_DK);
+    nose.position.set(6.4, 1.9, 0); g.add(nose);
+    for (const hx of [-3.5, 0.5]) {
+      const hatch = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 2.9), ARMOR_DK);
+      hatch.position.set(hx, 4.05, 0); g.add(hatch);
+    }
+    for (const s of [1.96, -1.96]) {
+      const shield = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.12), SHIELD_MAT);
+      shield.position.set(3, 2.3, s); g.add(shield);
+    }
+    addWheels(g, [-5.2, -2.6, 0, 5.6], 1.9, 1.1);
+    addLamps(g, 7.75, -6.35, 1.8, 1.2);
+    g.userData.paint = [];
+    return g;
+  },
+};
+
+const pools = { car: [], truck: [], moto: [], acar: [], atruck: [] };
+function acquireMesh(vtype) {
+  const g = pools[vtype].pop() || builders[vtype]();
+  g.visible = true;
+  vehicleLayer.add(g);
+  return g;
+}
+function releaseMesh(vtype, g) {
+  g.visible = false;
+  vehicleLayer.remove(g);
+  pools[vtype].push(g);
+}
+function paintMesh(g, color) {
+  for (const m of g.userData.paint) m.material.color.setHex(color);
+}
+
+/* highlight box for the hovered vehicle */
+const highlight = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshBasicMaterial({ color: 0xffb94f, wireframe: true })
+);
+highlight.visible = false;
+scene.add(highlight);
+
+/* ------------------------------------------------ vehicles --------- */
+const vehicles = [];
+const aggMap = new Map();      // flowKey -> vehicle (merge bursts near spawn)
+const recent = [];             // packet stats
+
+function vtypeFor(bytes, secure) {
+  if (bytes >= 1100) return secure ? 'atruck' : 'truck';
+  if (bytes >= 250 || secure) return secure ? 'acar' : 'car';
+  return 'moto';
+}
+function flowKey(road, p) {
+  return road.key + '|' + p.dir + '|' + (p.dir === 'out' ? p.dport : p.sport) + '|' + p.proto;
+}
+function travelled(v) { return v.dir === 'out' ? v.x + ROAD_END : ROAD_END - v.x; }
+
+function removeVehicle(i) {
+  const v = vehicles[i];
+  v.dead = true;
+  releaseMesh(v.vtype, v.mesh);
+  vehicles.splice(i, 1);
+}
+
+function retype(v) {
+  const nt = vtypeFor(v.bytes, v.pkt.secure);
+  if (nt === v.vtype) return;
+  releaseMesh(v.vtype, v.mesh);
+  v.vtype = nt;
+  v.len = SIZES[nt];
+  v.mesh = acquireMesh(nt);
+  paintMesh(v.mesh, v.color);
+}
+
+function laneCount(road, dir) {
+  let n = 0;
+  for (const v of vehicles) if (v.road === road && v.dir === dir) n++;
+  return n;
+}
+function rearVehicle(road, dir) {
+  let rear = null, best = Infinity;
+  for (const v of vehicles)
+    if (v.road === road && v.dir === dir && travelled(v) < best) { best = travelled(v); rear = v; }
+  return rear;
 }
 
 function spawnVehicle(pkt) {
   const road = getRoad(pkt);
   road.lastActive = performance.now();
-  if (pkt.dir === 'out') { road.tx += pkt.size; road.out++; }
-  else { road.rx += pkt.size; road.inn++; }
-
-  const type = vehicleType(pkt.size);
-  const startX = pkt.dir === 'out' ? HUB_W + 10 : W - SIGN_W - 10;
-  const base = type === 'truck' ? 150 : type === 'moto' ? 285 : 215;
-  vehicles.push({
-    road, pkt, type,
-    dir: pkt.dir,
-    x: startX,
-    speed: base * (0.85 + Math.random() * 0.3),
-    color: CIVILIAN_COLORS[(Math.random() * CIVILIAN_COLORS.length) | 0],
-    halfW: type === 'truck' ? 30 : type === 'moto' ? 11 : 19,
-  });
-  if (vehicles.length > MAX_VEHICLES) vehicles.shift();
-
+  if (pkt.dir === 'out') road.tx += pkt.size; else road.rx += pkt.size;
+  dirtySigns.add(road);
   recent.push({ t: performance.now(), size: pkt.size });
+
+  // 1) burst aggregation — same flow, vehicle still near spawn → merge
+  const fk = flowKey(road, pkt);
+  const agg = aggMap.get(fk);
+  if (agg && !agg.dead && agg.road === road &&
+      performance.now() - agg.bornAt < AGG_WINDOW && travelled(agg) < AGG_ZONE) {
+    agg.count++; agg.bytes += pkt.size;
+    retype(agg);
+    return;
+  }
+
+  // 2) congestion valve — lane full → merge into the rearmost vehicle
+  if (laneCount(road, pkt.dir) >= MAX_PER_LANE) {
+    const rear = rearVehicle(road, pkt.dir);
+    if (rear) { rear.count++; rear.bytes += pkt.size; rear.mixed = true; retype(rear); }
+    return;
+  }
+
+  const vtype = vtypeFor(pkt.size, pkt.secure);
+  const v = {
+    road, pkt, dir: pkt.dir,
+    vtype, len: SIZES[vtype],
+    x: pkt.dir === 'out' ? -ROAD_END + 4 : ROAD_END - 4,
+    speed: SPEEDS[vtype] * (0.9 + Math.random() * 0.2),
+    color: CIVILIAN_COLORS[(Math.random() * CIVILIAN_COLORS.length) | 0],
+    bornAt: performance.now(),
+    count: 1, bytes: pkt.size, mixed: false, dead: false,
+    mesh: acquireMesh(vtype),
+  };
+  paintMesh(v.mesh, v.color);
+  vehicles.push(v);
+  aggMap.set(fk, v);
+  if (aggMap.size > 600) aggMap.clear();          // cheap periodic reset
+  if (vehicles.length > MAX_VEHICLES) removeVehicle(0);
 }
 
 function updateVehicles(dt) {
+  // advance
+  for (const v of vehicles) v.x += (v.dir === 'out' ? 1 : -1) * v.speed * dt;
+
+  // car-following: group per lane, front-first, clamp followers to a safe gap
+  const lanes = new Map();
+  for (const v of vehicles) {
+    const k = v.road.key + '|' + v.dir;
+    (lanes.get(k) || lanes.set(k, []).get(k)).push(v);
+  }
+  for (const lane of lanes.values()) {
+    lane.sort((a, b) => travelled(b) - travelled(a));
+    for (let i = 1; i < lane.length; i++) {
+      const lead = lane[i - 1], v = lane[i];
+      const gap = (lead.len + v.len) / 2 + 2.8;
+      if (v.dir === 'out') v.x = Math.min(v.x, lead.x - gap);
+      else v.x = Math.max(v.x, lead.x + gap);
+    }
+  }
+
+  // despawn at the far end only (queued vehicles may sit behind the spawn)
   for (let i = vehicles.length - 1; i >= 0; i--) {
     const v = vehicles[i];
-    v.x += (v.dir === 'out' ? 1 : -1) * v.speed * dt;
-    if (v.x > W - SIGN_W + 26 || v.x < HUB_W - 26) vehicles.splice(i, 1);
+    if ((v.dir === 'out' && v.x > ROAD_END + 2) ||
+        (v.dir === 'in' && v.x < -ROAD_END - 2)) removeVehicle(i);
   }
 }
 
-/* ------------------------------------------------ drawing ------ */
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-  layoutRoads();
-
-  for (const r of roadOrder) drawRoad(r);
-  drawHub();
-
-  hovered = null;
+function placeVehicles() {
   for (const v of vehicles) {
-    drawVehicle(v);
-    if (paused && !hovered) {
-      const y = laneY(v);
-      if (Math.abs(mouse.x - v.x) < v.halfW + 6 && Math.abs(mouse.y - y) < 16) hovered = v;
-    }
-  }
-  if (paused && hovered) drawHighlight(hovered);
-  updateTooltip();
-}
-
-function laneY(v) {
-  return v.road.y + (v.dir === 'out' ? -LANE_OFF : LANE_OFF);
-}
-
-function drawRoad(r) {
-  const y = r.y, x0 = HUB_W, x1 = W - SIGN_W;
-  // asphalt
-  ctx.fillStyle = '#25282E';
-  ctx.fillRect(x0, y - ROAD_HALF, x1 - x0, ROAD_HALF * 2);
-  // white edge lines
-  ctx.fillStyle = 'rgba(216,214,206,.85)';
-  ctx.fillRect(x0, y - ROAD_HALF + 2, x1 - x0, 2);
-  ctx.fillRect(x0, y + ROAD_HALF - 4, x1 - x0, 2);
-  // double-yellow median
-  ctx.fillStyle = '#E8C34A';
-  ctx.fillRect(x0, y - 2.5, x1 - x0, 1.6);
-  ctx.fillRect(x0, y + 1, x1 - x0, 1.6);
-  // exit board
-  drawExitSign(r);
-}
-
-function fmtBytes(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
-  return (b / 1073741824).toFixed(2) + ' GB';
-}
-
-function drawExitSign(r) {
-  const bw = SIGN_W - 24, bh = 44;
-  const bx = W - SIGN_W + 10, by = r.y - bh / 2;
-  // post connecting road to board
-  ctx.fillStyle = '#3A3F47';
-  ctx.fillRect(W - SIGN_W, r.y - 2, 12, 4);
-  // green board
-  ctx.fillStyle = '#1E6B3C';
-  roundRect(bx, by, bw, bh, 7); ctx.fill();
-  ctx.strokeStyle = '#F2F4F0'; ctx.lineWidth = 2;
-  roundRect(bx + 2.5, by + 2.5, bw - 5, bh - 5, 5); ctx.stroke();
-  // domain
-  ctx.fillStyle = '#fff';
-  ctx.font = '700 13px Overpass, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  let label = r.label;
-  while (ctx.measureText(label).width > bw - 18 && label.length > 4)
-    label = label.slice(0, -2);
-  if (label !== r.label) label += '…';
-  ctx.fillText(label, bx + bw / 2, by + 15);
-  // traffic totals
-  ctx.font = '600 10.5px "IBM Plex Mono", monospace';
-  ctx.fillStyle = '#CFE5D6';
-  ctx.fillText(`↑ ${fmtBytes(r.tx)}  ↓ ${fmtBytes(r.rx)}`, bx + bw / 2, by + 31);
-}
-
-function drawHub() {
-  ctx.fillStyle = '#121419';
-  ctx.fillRect(0, 0, HUB_W, H);
-  ctx.fillStyle = '#2E333B';
-  ctx.fillRect(HUB_W - 4, 0, 4, H);
-  // glowing connection points where each road meets the hub
-  for (const r of roadOrder) {
-    ctx.fillStyle = 'rgba(255,185,79,.9)';
-    ctx.beginPath(); ctx.arc(HUB_W - 2, r.y - LANE_OFF, 3, 0, 7); ctx.fill();
-    ctx.beginPath(); ctx.arc(HUB_W - 2, r.y + LANE_OFF, 3, 0, 7); ctx.fill();
-  }
-  // computer pictogram
-  const cxr = HUB_W / 2, cy = Math.min(74, H * 0.14);
-  ctx.strokeStyle = '#9AA29B'; ctx.lineWidth = 2.5;
-  roundRect(cxr - 22, cy - 18, 44, 30, 4); ctx.stroke();
-  ctx.fillStyle = '#57D98A';
-  ctx.fillRect(cxr - 16, cy - 12, 32, 18);
-  ctx.strokeStyle = '#9AA29B';
-  ctx.beginPath(); ctx.moveTo(cxr - 12, cy + 19); ctx.lineTo(cxr + 12, cy + 19); ctx.stroke();
-  ctx.fillStyle = '#F2F4F0';
-  ctx.font = '800 12px Overpass, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText('YOUR', cxr, cy + 40);
-  ctx.fillText('COMPUTER', cxr, cy + 54);
-}
-
-/* ----- vehicle sprites (drawn facing right, mirrored for inbound) ----- */
-function drawVehicle(v) {
-  const y = laneY(v);
-  ctx.save();
-  ctx.translate(v.x, y);
-  if (v.dir === 'in') ctx.scale(-1, 1);
-
-  // headlight cone
-  ctx.fillStyle = 'rgba(255,233,168,.14)';
-  ctx.beginPath();
-  ctx.moveTo(v.halfW - 2, -2);
-  ctx.lineTo(v.halfW + 34, -8);
-  ctx.lineTo(v.halfW + 34, 6);
-  ctx.lineTo(v.halfW - 2, 3);
-  ctx.closePath(); ctx.fill();
-
-  if (v.pkt.secure) drawArmored(v); else drawCivilian(v);
-
-  // headlight + taillight dots
-  ctx.fillStyle = '#FFE9A8';
-  ctx.fillRect(v.halfW - 3, -3, 3, 3);
-  ctx.fillStyle = '#E5484D';
-  ctx.fillRect(-v.halfW, -3, 2.5, 3);
-  ctx.restore();
-}
-
-function wheel(x, r) {
-  ctx.fillStyle = '#15171A';
-  ctx.beginPath(); ctx.arc(x, 6, r, 0, 7); ctx.fill();
-  ctx.fillStyle = '#4B5058';
-  ctx.beginPath(); ctx.arc(x, 6, r * 0.45, 0, 7); ctx.fill();
-}
-
-function drawCivilian(v) {
-  if (v.type === 'moto') {
-    wheel(-7, 3.5); wheel(7, 3.5);
-    ctx.strokeStyle = v.color; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(-7, 5); ctx.lineTo(0, 0); ctx.lineTo(7, 4); ctx.stroke();
-    ctx.fillStyle = v.color;
-    ctx.beginPath(); ctx.arc(-1, -5, 2.6, 0, 7); ctx.fill();      // rider
-  } else if (v.type === 'car') {
-    wheel(-10, 4.5); wheel(10, 4.5);
-    ctx.fillStyle = v.color;
-    roundRect(-18, -5, 36, 10, 3.5); ctx.fill();
-    roundRect(-9, -12, 18, 9, 3.5); ctx.fill();                   // cabin
-    ctx.fillStyle = '#BFD9F2';
-    ctx.fillRect(-6, -10, 12, 5);                                 // windows
-  } else { // truck
-    wheel(-22, 5); wheel(-10, 5); wheel(16, 5);
-    ctx.fillStyle = '#C9CDD4';                                    // trailer
-    roundRect(-30, -15, 38, 21, 2.5); ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.lineWidth = 1;
-    for (let i = -26; i < 6; i += 5) {
-      ctx.beginPath(); ctx.moveTo(i, -13); ctx.lineTo(i, 4); ctx.stroke();
-    }
-    ctx.fillStyle = v.color;                                      // cab
-    roundRect(10, -12, 18, 18, 3); ctx.fill();
-    ctx.fillStyle = '#BFD9F2';
-    ctx.fillRect(20, -10, 6, 7);
+    const z = v.road.group.position.z + (v.dir === 'out' ? -LANE_OFF : LANE_OFF);
+    v.mesh.position.set(v.x, 0, z);
+    v.mesh.rotation.y = v.dir === 'out' ? 0 : Math.PI;
+    v.mesh.visible = v.dir === 'out' ? v.x > -ROAD_END - 2 : v.x < ROAD_END + 2;
   }
 }
 
-function drawArmored(v) {
-  ctx.fillStyle = '#4A5D3A';
-  ctx.strokeStyle = '#2E3B24'; ctx.lineWidth = 1.5;
-  if (v.type === 'truck') {
-    wheel(-22, 5); wheel(-11, 5); wheel(0, 5); wheel(16, 5);
-    ctx.beginPath();                                              // angular hull
-    ctx.moveTo(-30, 4); ctx.lineTo(-30, -8); ctx.lineTo(-24, -15);
-    ctx.lineTo(6, -15); ctx.lineTo(10, -8);
-    ctx.lineTo(12, -12); ctx.lineTo(26, -12); ctx.lineTo(30, -4);
-    ctx.lineTo(30, 4); ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#37452B';                                    // hatch
-    ctx.fillRect(-14, -19, 12, 5);
-  } else {
-    wheel(-10, 4.5); wheel(10, 4.5);
-    ctx.beginPath();
-    ctx.moveTo(-17, 4); ctx.lineTo(-17, -4); ctx.lineTo(-11, -11);
-    ctx.lineTo(9, -11); ctx.lineTo(17, -3); ctx.lineTo(17, 4);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#C9D6BC';                                    // vision slit
-    ctx.fillRect(-4, -9, 10, 2.5);
+/* ------------------------------------------------ hover / tooltip -- */
+let hovered = null;
+function pickVehicle() {
+  hovered = null;
+  if (!paused || mouse.sx < 0) { highlight.visible = false; tooltip.style.display = 'none'; return; }
+  raycaster.setFromCamera({ x: mouse.x, y: mouse.y }, camera);
+  const hits = raycaster.intersectObjects(vehicleLayer.children, true);
+  if (hits.length) {
+    let node = hits[0].object;
+    while (node.parent && node.parent !== vehicleLayer) node = node.parent;
+    for (const v of vehicles) if (v.mesh === node) { hovered = v; break; }
   }
-  // shield emblem
-  const sx = v.type === 'truck' ? -12 : -1;
-  ctx.fillStyle = '#EDE9D8';
-  ctx.beginPath();
-  ctx.moveTo(sx - 3.5, -6); ctx.lineTo(sx + 3.5, -6);
-  ctx.lineTo(sx + 3.5, -1.5); ctx.lineTo(sx, 2); ctx.lineTo(sx - 3.5, -1.5);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#37452B'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(sx - 1.6, -3.6); ctx.lineTo(sx - 0.3, -2);
-  ctx.lineTo(sx + 2, -5); ctx.stroke();
-}
+  if (!hovered) { highlight.visible = false; tooltip.style.display = 'none'; return; }
 
-function drawHighlight(v) {
-  const y = laneY(v);
-  ctx.strokeStyle = '#FFB94F'; ctx.lineWidth = 2;
-  ctx.setLineDash([5, 4]);
-  roundRect(v.x - v.halfW - 6, y - 20, v.halfW * 2 + 12, 32, 6);
-  ctx.stroke();
-  ctx.setLineDash([]);
-}
+  const box = new THREE.Box3().setFromObject(hovered.mesh);
+  const size = new THREE.Vector3(), center = new THREE.Vector3();
+  box.getSize(size); box.getCenter(center);
+  highlight.position.copy(center);
+  highlight.scale.set(size.x + 1.5, size.y + 1.5, size.z + 1.5);
+  highlight.visible = true;
 
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-/* ------------------------------------------------ tooltip ------ */
-function updateTooltip() {
-  if (!paused || !hovered) { tooltip.style.display = 'none'; return; }
   const p = hovered.pkt;
   const t = new Date(p.ts * 1000);
   const hh = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0');
@@ -509,67 +644,73 @@ function updateTooltip() {
   const arrow = p.dir === 'out' ? 'OUT →' : '← IN ';
   const sp = p.sport != null ? ':' + p.sport : '';
   const dp = p.dport != null ? ':' + p.dport : '';
+  const pk = hovered.count > 1
+    ? `${hovered.count} packets${hovered.mixed ? ' (merged flows)' : ''} · ${hovered.bytes.toLocaleString()} bytes total`
+    : `${p.size.toLocaleString()} bytes`;
   tooltip.innerHTML =
     `<span class="dest">${esc(hovered.road.label)}</span>  ${secLabel}\n` +
     `${arrow}  ${esc(p.src)}${sp} → ${esc(p.dst)}${dp}\n` +
-    `${p.proto} · ${p.size.toLocaleString()} bytes · ${hovered.type}` +
+    `${p.proto} · ${pk} · ${hovered.vtype.replace('a', 'armored ')}` +
     (p.host ? `\nhost  ${esc(p.host)}` : '') +
     `\ntime  ${hh}`;
   tooltip.style.display = 'block';
+  const r = wrap.getBoundingClientRect();
   const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
-  let tx = mouse.x + 16, ty = mouse.y - th - 12;
-  if (tx + tw > W - 8) tx = mouse.x - tw - 16;
-  if (ty < 8) ty = mouse.y + 18;
+  let tx = mouse.sx + 16, ty = mouse.sy - th - 12;
+  if (tx + tw > r.width - 8) tx = mouse.sx - tw - 16;
+  if (ty < 8) ty = mouse.sy + 18;
   tooltip.style.left = tx + 'px';
   tooltip.style.top = ty + 'px';
 }
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-}
 
-/* ------------------------------------------------ input -------- */
-cv.addEventListener('mousemove', e => {
-  const r = cv.getBoundingClientRect();
-  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
-  if (paused) draw();                       // re-hit-test while frozen
-});
-cv.addEventListener('mouseleave', () => { mouse.x = mouse.y = -1; if (paused) draw(); });
-
+/* ------------------------------------------------ controls --------- */
+let paused = false;
 function setPaused(p) {
   paused = p;
   pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE';
   pauseBtn.setAttribute('aria-pressed', String(paused));
   pausedStamp.style.display = paused ? 'block' : 'none';
-  cv.style.cursor = paused ? 'crosshair' : 'default';
+  renderer.domElement.style.cursor = paused ? 'crosshair' : 'grab';
 }
 pauseBtn.addEventListener('click', () => setPaused(!paused));
 window.addEventListener('keydown', e => {
   if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); setPaused(!paused); }
+  if (e.code === 'KeyR') { Object.assign(cam, HOME); applyCamera(); }
 });
+setPaused(false);
 
-/* ------------------------------------------------ stats -------- */
+/* ------------------------------------------------ stats ------------ */
 function updateStats() {
   const now = performance.now();
   while (recent.length && now - recent[0].t > 2000) recent.shift();
-  const pps = Math.round(recent.length / 2);
-  const bps = recent.reduce((a, r) => a + r.size, 0) / 2;
   document.getElementById('stVeh').textContent = vehicles.length;
-  document.getElementById('stPps').textContent = pps;
+  document.getElementById('stPps').textContent = Math.round(recent.length / 2);
+  const bps = recent.reduce((a, r) => a + r.size, 0) / 2;
   document.getElementById('stBps').textContent = fmtBytes(Math.round(bps)) + '/s';
 }
 setInterval(updateStats, 500);
+setInterval(() => {                       // repaint changed exit boards
+  for (const r of dirtySigns) paintSign(r.group.userData.sign, r.label, r.tx, r.rx);
+  dirtySigns.clear();
+}, 500);
+if (document.fonts && document.fonts.ready)
+  document.fonts.ready.then(() => { for (const r of roads.values()) dirtySigns.add(r); });
 
-/* ------------------------------------------------ main loop ---- */
+/* ------------------------------------------------ main loop -------- */
 let lastT = performance.now();
 function frame(t) {
   const dt = Math.min(0.05, (t - lastT) / 1000);
   lastT = t;
-  if (!paused) { updateVehicles(dt); draw(); }
+  layoutRoads();
+  if (!paused) updateVehicles(dt);
+  placeVehicles();
+  pickVehicle();
+  renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-/* ------------------------------------------------ data feed ---- */
+/* ------------------------------------------------ data feed -------- */
 function setMode(cls, text) { modeEl.className = 'badge ' + cls; modeEl.textContent = text; }
 
 let demoTimer = null;
@@ -578,9 +719,7 @@ let everConnected = false;
 function connect() {
   let ws;
   try { ws = new WebSocket(WS_URL); } catch { startDemo(); return; }
-
   const failTimer = setTimeout(() => { if (ws.readyState !== 1) ws.close(); }, 1800);
-
   ws.onopen = () => {
     clearTimeout(failTimer);
     everConnected = true;
@@ -588,6 +727,7 @@ function connect() {
     setMode('live', 'LIVE CAPTURE');
   };
   ws.onmessage = e => {
+    if (paused) return;                       // don't stack up traffic while frozen
     const msg = JSON.parse(e.data);
     if (msg.type !== 'packets') return;
     const items = msg.items.length > MAX_SPAWN_PER_BATCH
@@ -597,28 +737,25 @@ function connect() {
   };
   ws.onclose = () => {
     clearTimeout(failTimer);
-    if (everConnected) {
-      setMode('wait', 'RECONNECTING…');
-      setTimeout(connect, 3000);
-    } else startDemo();
+    if (everConnected) { setMode('wait', 'RECONNECTING…'); setTimeout(connect, 3000); }
+    else startDemo();
   };
   ws.onerror = () => {};
 }
 
-/* Demo traffic so the page works with a double-click, backend or not. */
 const DEMO_HOSTS = [
-  { host: 'google.com',       ip: '142.250.183.14', port: 443, secure: true,  weight: 4, big: .35 },
-  { host: 'youtube.com',      ip: '142.250.183.78', port: 443, secure: true,  weight: 3, big: .75 },
-  { host: 'github.com',       ip: '140.82.112.3',   port: 443, secure: true,  weight: 2, big: .4  },
-  { host: 'api.anthropic.com',ip: '160.79.104.10',  port: 443, secure: true,  weight: 2, big: .5  },
-  { host: 'dns.google',       ip: '8.8.8.8',        port: 53,  secure: false, weight: 3, big: 0   },
-  { host: 'example.com',      ip: '93.184.215.14',  port: 80,  secure: false, weight: 1, big: .3  },
-  { host: 'pool.ntp.org',     ip: '162.159.200.1',  port: 123, secure: false, weight: 1, big: 0   },
+  { host: 'google.com',        ip: '142.250.183.14', port: 443, secure: true,  weight: 4, big: .35 },
+  { host: 'youtube.com',       ip: '142.250.183.78', port: 443, secure: true,  weight: 3, big: .75 },
+  { host: 'github.com',        ip: '140.82.112.3',   port: 443, secure: true,  weight: 2, big: .4  },
+  { host: 'api.anthropic.com', ip: '160.79.104.10',  port: 443, secure: true,  weight: 2, big: .5  },
+  { host: 'dns.google',        ip: '8.8.8.8',        port: 53,  secure: false, weight: 3, big: 0   },
+  { host: 'example.com',       ip: '93.184.215.14',  port: 80,  secure: false, weight: 1, big: .3  },
+  { host: 'pool.ntp.org',      ip: '162.159.200.1',  port: 123, secure: false, weight: 1, big: 0   },
 ];
 function demoSize(big) {
-  if (Math.random() < big) return 1100 + (Math.random() * 12000 | 0);   // truck
-  return Math.random() < 0.5 ? 60 + (Math.random() * 180 | 0)           // moto
-                             : 260 + (Math.random() * 800 | 0);         // car
+  if (Math.random() < big) return 1100 + (Math.random() * 12000 | 0);
+  return Math.random() < 0.5 ? 60 + (Math.random() * 180 | 0)
+                             : 260 + (Math.random() * 800 | 0);
 }
 function startDemo() {
   if (demoTimer) return;
